@@ -1,6 +1,7 @@
 package blockfetcher
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -208,6 +209,23 @@ func fetchBlockReceipts(ctx context.Context, block *rpc.Block, client *rpc.Clien
 			}
 		}
 		out[receipt.TransactionHash.Pretty()] = receipt
+	}
+
+	if block.Number == 0 && allowEmptyReceiptsOnBlock0 {
+		return out, nil
+	}
+
+	// A load-balanced endpoint can serve the block from one backend and the receipts
+	// from another that is behind (`null` result, no error) or on another fork. Using
+	// them would store every transaction of the block with an `Unknown` status.
+	for _, tx := range block.Transactions.Transactions {
+		receipt, found := out[tx.Hash.Pretty()]
+		if !found {
+			return nil, fmt.Errorf("block receipts are missing transaction %s (got %d receipts for %d transactions)", tx.Hash.Pretty(), len(receipts), len(block.Transactions.Transactions))
+		}
+		if !bytes.Equal(receipt.BlockHash, block.Hash) {
+			return nil, fmt.Errorf("receipt of transaction %s is for block %s, not %s", tx.Hash.Pretty(), receipt.BlockHash.Pretty(), block.Hash.Pretty())
+		}
 	}
 
 	return out, nil

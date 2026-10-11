@@ -238,3 +238,62 @@ func TestFetchPBEth_BlockWithoutHashIsAnError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "10")
 }
+
+// blockReceiptsServer answers `eth_getBlockReceipts` with the given body, which
+// stands for a load-balanced endpoint whose receipts come from another backend
+// than the block.
+func blockReceiptsServer(t *testing.T, receiptsResult string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buffer := bytes.NewBuffer(nil)
+		_, err := buffer.ReadFrom(r.Body)
+		require.NoError(t, err)
+
+		var req map[string]interface{}
+		err = json.Unmarshal(buffer.Bytes(), &req)
+		require.NoError(t, err)
+
+		if method := req["method"].(string); method != "eth_getBlockReceipts" {
+			t.Fatalf("unexpected method: %s", method)
+		}
+		w.Write([]byte(receiptsResult))
+	}))
+}
+
+func TestFetchReceipts_NullBlockReceiptsIsAnError(t *testing.T) {
+	server := blockReceiptsServer(t, `{"jsonrpc":"2.0","id":"0x1","result":null}`)
+	defer server.Close()
+
+	out, err := FetchReceipts(context.Background(), testBlock(10), rpc.NewClient(server.URL), 2, false)
+	assert.Nil(t, out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), testTxHash1.Pretty())
+}
+
+func TestFetchReceipts_MissingReceiptIsAnError(t *testing.T) {
+	var full map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(blockReceiptsResponse()), &full))
+	var receipts []json.RawMessage
+	require.NoError(t, json.Unmarshal(full["result"], &receipts))
+	partial := `{"jsonrpc":"2.0","id":"0x1","result":[` + string(receipts[0]) + `]}`
+
+	server := blockReceiptsServer(t, partial)
+	defer server.Close()
+
+	out, err := FetchReceipts(context.Background(), testBlock(10), rpc.NewClient(server.URL), 2, false)
+	assert.Nil(t, out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), testTxHash2.Pretty())
+}
+
+func TestFetchReceipts_ReceiptOfOtherBlockIsAnError(t *testing.T) {
+	block := testBlock(10)
+	block.Hash = eth.MustNewHash("0x9999999999999999999999999999999999999999999999999999999999999999")
+
+	server := blockReceiptsServer(t, blockReceiptsResponse())
+	defer server.Close()
+
+	out, err := FetchReceipts(context.Background(), block, rpc.NewClient(server.URL), 2, false)
+	assert.Nil(t, out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), block.Hash.Pretty())
+}

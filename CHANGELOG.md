@@ -36,6 +36,8 @@ for instructions to keep up to date.
 
 ### Fixed
 
+- RPC poller: a block is no longer stored with every transaction in status `Unknown`, gas used 0 and no logs when `eth_getBlockReceipts` answers `null`, or leaves out transactions, without a JSON-RPC error. A load-balanced endpoint does this when the receipts come from a backend that is behind the one that served the block. The poller now also rejects receipts of another block with the same number, and retries the block, rotating providers, in both cases.
+
 - Firehose and substreams-tier1 now return the sessions they still hold to the session server before exiting, whatever `--common-system-shutdown-signal-delay` is set to. Sessions of requests cut by the shutdown used to be released in the background while the process exited, so they stayed counted against the organization until they expired on the session server, and a client reconnecting right away could be refused with `Concurrent stream limit exceeded`. This applies to session plugins implementing `Close(ctx) error`, which the `tgm://` plugin does.
 
 - Substreams: Fix tier1 requests rejected before their body is read (authentication, compression enforcement) sometimes failing at a load balancer with HTTP 502 or `INTERNAL` instead of returning their error.
